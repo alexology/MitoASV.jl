@@ -4,6 +4,10 @@ Reference-free biological plausibility assessment of mitochondrial
 protein-coding amplicon sequence variants (ASVs), designed for insect
 metabarcoding and long-range ND2–COI amplicons.
 
+This package is part of an experimental effort to use AI to port
+bioinformatics and quantitative ecology packages to Julia, with the goal of
+creating a unified environment for high performance scientific computing.
+
 MitoASV looks for ASVs that may be artifacts using only the ASVs
 themselves. It checks the reading frame, hydrophobicity, amino acid
 substitutions, conservation within groups of related ASVs, codon-level
