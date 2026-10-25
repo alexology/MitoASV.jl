@@ -66,4 +66,45 @@
     @test hasproperty(w, :COI_modal_length_nt) && hasproperty(w, :ND2_cluster)
     @test w.flag_length_outlier[findfirst(==("SIM_DEL3"), w.ASV)] === true
     @test_throws ArgumentError assess_asvs(df; sequence_col = nothing, genes = Dict(:COI => :nope), frame = 1)
+
+    # the global strand applies to genes without their own, as the frame does
+    rc = DataFrame(COI = ["ATGAAACCC"], species = ["s"])
+    kw = (sequence_col = nothing, frame = 1, species_col = :species)
+    minus = assess_asvs(rc; genes = Dict(:COI => (column = :COI, strand = :-)), kw...).validation.protein
+    @test minus == ["GFH"]
+    @test assess_asvs(rc; genes = Dict(:COI => :COI), strand = :-, kw...).validation.protein == minus
+    @test assess_asvs(rc; genes = Dict(:COI => (column = :COI,)), strand = :-, kw...).validation.protein == minus
+    @test assess_asvs(rc; genes = Dict(:COI => (column = :COI, strand = :+)), strand = :-,
+                      kw...).validation.protein == ["MKP"]
+end
+
+@testset "Protein clustering respects the selected gene" begin
+    df = DataFrame(g1 = ["ATGATGATG", "ATGATGATG"],
+                   g2 = ["GCTGCTGCT", "GGTGGTGGT"])
+    kw = (sequence_col = nothing, genes = Dict(:G1 => :g1, :G2 => :g2),
+          frame = 1, cluster_level = :protein, cluster_threshold = 0.0,
+          concordance = false, threaded = false)
+    selected = assess_asvs(df; kw..., cluster_on = :G1)
+    @test all(==(1), selected.clusters.cluster)
+    @test all(==("protein translation of gene G1"), selected.clusters.cluster_basis)
+    other = assess_asvs(df; kw..., cluster_on = :G2)
+    @test length(unique(other.clusters.cluster)) == 2
+    @test_throws ArgumentError assess_asvs(df; kw..., cluster_on = :unknown)
+    # A missing unselected gene must not prevent clustering on the chosen one.
+    allowmissing!(df, :g2)
+    df.g2[2] = missing
+    @test all(==(1), assess_asvs(df; kw..., cluster_on = :G1).clusters.cluster)
+end
+
+@testset "Wide output preserves existing prefixed columns" begin
+    df = DataFrame(sequence = ["ATGATGATG"], classification = ["original"],
+                   mito_classification = ["provenance"],
+                   mito_mito_classification = ["another source"])
+    original = copy(df)
+    result = assess_asvs_df(df; frame = 1, comparative = false,
+                           concordance = false, threaded = false)
+    @test df == original
+    @test result[:, names(df)] == original
+    @test result.mito_mito_mito_classification == ["Insufficient evidence"]
+    @test length(unique(names(result))) == ncol(result)
 end

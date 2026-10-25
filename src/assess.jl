@@ -67,8 +67,9 @@ function _gene_specs(gene, frame, strand, genes)
     gene === nothing || gene == :gene ||
         @warn "both `gene` and `genes` given; `gene` is ignored"
     itr = genes isa AbstractDict ? collect(genes) : genes isa AbstractVector ? genes : collect(pairs(genes))
-    specs = [GeneSpec(first(p), last(p)) for p in itr]
     # `frame` and `strand` given as arguments apply to genes without their own
+    # (a `GeneSpec` always has a strand, so only columns and NamedTuples inherit it)
+    specs = [GeneSpec(first(p), _inherit_strand(last(p), strand)) for p in itr]
     frame === nothing || (specs = [s.frame === nothing ? GeneSpec(s.name, s.start, s.stop, frame, s.strand, s.column) : s
                                    for s in specs])
     isempty(specs) && throw(ArgumentError("`genes` is empty"))
@@ -78,6 +79,10 @@ function _gene_specs(gene, frame, strand, genes)
     genes isa AbstractDict && sort!(specs; by = s -> (coalesce(string(s.column), ""), s.start, string(s.name)))
     specs
 end
+
+_inherit_strand(column::Union{Symbol,AbstractString}, strand) = (column = Symbol(column), strand)
+_inherit_strand(nt::NamedTuple, strand) = haskey(nt, :strand) ? nt : merge(nt, (; strand))
+_inherit_strand(g, _) = g
 
 _coalesce_nothing(x) = x === nothing ? missing : x
 
@@ -296,6 +301,6 @@ columns, the composite summary, one Bool column per anomaly flag
 (`missing` when the corresponding tests could not be evaluated and no flag
 was raised) and the main metrics of every gene, prefixed with the gene name
 (for example `COI_mean_kd`). Column names already used by the input get a
-`mito_` prefix.
+`mito_` prefix, repeated until the generated name is unused.
 """
 assess_asvs_df(df::AbstractDataFrame; kwargs...) = to_wide(assess_asvs(df; kwargs...))

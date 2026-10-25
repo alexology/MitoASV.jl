@@ -4,6 +4,13 @@
 function _cluster_keys(ctx::AnalysisContext)
     cfg = ctx.cfg; n = nrow(ctx.input)
     keys = Vector{Any}(nothing, n)
+    if cfg.cluster_on !== nothing
+        k = findfirst(g -> genename(g) == cfg.cluster_on, ctx.genes)
+        k === nothing && throw(ArgumentError("cluster_on = $(cfg.cluster_on) is not a gene of this analysis"))
+        keys, _ = _gene_keys(ctx, ctx.genes[k])
+        basis = cfg.cluster_level == :protein ? "protein translation" : "nucleotide sequence"
+        return keys, "$basis of gene $(cfg.cluster_on)"
+    end
     if cfg.cluster_level == :protein
         for r in 1:n
             parts = String[]
@@ -15,15 +22,6 @@ function _cluster_keys(ctx::AnalysisContext)
             isempty(parts) || (keys[r] = join(parts, "|"))
         end
         return keys, "protein translation of " * join(genename.(ctx.genes), "+")
-    end
-    if cfg.cluster_on !== nothing
-        k = findfirst(g -> genename(g) == cfg.cluster_on, ctx.genes)
-        k === nothing && throw(ArgumentError("cluster_on = $(cfg.cluster_on) is not a gene of this analysis"))
-        g = ctx.genes[k]
-        for r in 1:n
-            g.row_unique[r] == 0 || (keys[r] = g.masks[g.row_unique[r]])
-        end
-        return keys, "nucleotide sequence of gene $(cfg.cluster_on)"
     end
     if ctx.main !== nothing
         for r in 1:n
@@ -231,6 +229,23 @@ end
 
 const COMPARATIVE_REASON_NONE = ""
 
+"""
+Outcome of the within-group comparison of one unique sequence: its amino-acid,
+conservation and codon scores, or (`aa === nothing`) the reason why it was
+not compared.
+"""
+struct GroupScores
+    aa::Union{Nothing,NamedTuple}
+    cons::Union{Nothing,NamedTuple}
+    codon::Union{Nothing,NamedTuple}
+    reason::String
+end
+
+GroupScores(reason::AbstractString) = GroupScores(nothing, nothing, nothing, String(reason))
+scored(s::GroupScores) = s.aa !== nothing
+
+const NOT_ANALYSED = GroupScores("not analysed")
+
 function _mode_smallest(v::Vector{Int})
     c = Dict{Int,Int}()
     for x in v
@@ -246,7 +261,7 @@ function comparative_analyses!(ctx::AnalysisContext, L::Ledger, allgroups::Dict{
     results = GroupResult[]
     for g in ctx.genes
         groups = allgroups[genename(g)]
-        res = Dict{Tuple{Int,Int},Any}()       # (unique, cluster) => scores or reason
+        res = Dict{Tuple{Int,Int},GroupScores}()       # (unique, cluster) => outcome
         bycluster = Dict{Int,Vector{Int}}()
         rows_of = Dict{Tuple{Int,Int},Vector{Int}}()
         for r in eachindex(g.row_unique)
@@ -289,7 +304,7 @@ function _analyse_group(ctx, L, g::GeneData, c::Int, M::Vector{Int}, rows_of, re
     if length(M) < mg
         reason = "group has $(length(M)) unique $(gn) sequence(s); at least $mg needed"
         for u in M
-            res[(u, c)] = reason
+            res[(u, c)] = GroupScores(reason)
             for r in rowsfor(u)
                 addflag!(L, r, gn, :insufficient_comparators; metric = "n_unique_in_group",
                          value = length(M), threshold = mg, detail = reason)
@@ -306,7 +321,7 @@ function _analyse_group(ctx, L, g::GeneData, c::Int, M::Vector{Int}, rows_of, re
         g.records[u].n_columns == modal_cols && continue
         reason = "length ($(g.records[u].n_columns) columns) differs from the group modal length " *
                  "($modal_cols); positions are not compared without an alignment"
-        res[(u, c)] = reason
+        res[(u, c)] = GroupScores(reason)
         for r in rowsfor(u)
             addflag!(L, r, gn, :not_comparable; detail = reason)
         end
@@ -314,7 +329,7 @@ function _analyse_group(ctx, L, g::GeneData, c::Int, M::Vector{Int}, rows_of, re
     if length(C) < mg
         reason = "only $(length(C)) equal-length $(gn) sequences in the group; at least $mg needed"
         for u in C
-            res[(u, c)] = reason
+            res[(u, c)] = GroupScores(reason)
             for r in rowsfor(u)
                 addflag!(L, r, gn, :insufficient_comparators; metric = "n_comparable_in_group",
                          value = length(C), threshold = mg, detail = reason)
@@ -359,13 +374,17 @@ function _analyse_group(ctx, L, g::GeneData, c::Int, M::Vector{Int}, rows_of, re
             own = cidx[i][k]
             own == 0 && continue
             CR[k] - 1 < min_inf && continue
+            # Tolerances relative to the leave-one-out weight (as `_loo_position`)
+            tot = sum(view(CW, :, k)) - w[i]
+            tot > 0 || continue
+            zero_tol = 1e-12 * tot; tie_tol = 1e-9 * tot
             best = 0; bestv = -1.0; tie = false
             for x in 1:64
                 v = CW[x, k] - (x == own ? w[i] : 0.0)
-                v < 1e-12 && continue
-                if v > bestv + 1e-9
+                v < zero_tol && continue
+                if v > bestv + tie_tol
                     best = x; bestv = v; tie = false
-                elseif abs(v - bestv) <= 1e-9
+                elseif abs(v - bestv) <= tie_tol
                     tie = true
                 end
             end
@@ -373,9 +392,9 @@ function _analyse_group(ctx, L, g::GeneData, c::Int, M::Vector{Int}, rows_of, re
             add_codon_pair!(cc, tabs, best, own)
         end
         cod = codon_summary(cc; dnds = cfg.estimate_dnds)
-        res[(u, c)] = (aa = aa, cons = merge(cs, (n_comparators = length(C) - 1,
-                                                  n_effective_group = n_effective(w))),
-                       codon = cod)
+        res[(u, c)] = GroupScores(aa, merge(cs, (n_comparators = length(C) - 1,
+                                                 n_effective_group = n_effective(w))),
+                                  cod, "")
         h = g.hydro[u]
         metrics[:mean_kd][i] = h.mean_kd
         metrics[:frac_windows_above][i] = h.frac_windows_above
@@ -442,9 +461,9 @@ function _scores_rows(ctx, groups, g::GeneData, res, which::Symbol)
         elseif c === missing
             reason[r] = groups.row_reason[r] == "" ? "no comparison group" : groups.row_reason[r]; continue
         end
-        v = get(res, (u, c), "not analysed")
-        if v isa AbstractString
-            reason[r] = v; continue
+        v = get(res, (u, c), NOT_ANALYSED)
+        if !scored(v)
+            reason[r] = v.reason; continue
         end
         nt = getfield(v, which)
         for col in cols

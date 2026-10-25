@@ -91,6 +91,14 @@ function hydrophobicity_table(proteins::AbstractVector; ids = 1:length(proteins)
     df
 end
 
+# Metrics of one unique sequence as stored by the pipeline (`GeneData.hydro`):
+# a concrete type for both the computed and the missing case.
+const HydroMetrics = @NamedTuple{n_residues_scored::Union{Missing,Int}, mean_kd::Union{Missing,Float64},
+                                 median_kd::Union{Missing,Float64}, sd_kd::Union{Missing,Float64},
+                                 frac_hydrophobic::Union{Missing,Float64}, n_windows::Union{Missing,Int},
+                                 frac_windows_above::Union{Missing,Float64}, max_window_kd::Union{Missing,Float64},
+                                 min_window_kd::Union{Missing,Float64}, reason::String}
+
 _missing_hydro(reason) = (n_residues_scored = missing, mean_kd = missing, median_kd = missing,
                           sd_kd = missing, frac_hydrophobic = missing, n_windows = missing,
                           frac_windows_above = missing, max_window_kd = missing,

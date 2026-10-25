@@ -73,18 +73,22 @@ freq_of(k), informative)`.
     tot = core.wsum[p] - (k0 == 0 ? 0.0 : w0)
     raw = core.rsum[p] - (k0 == 0 ? 0 : 1)
     (raw < min_inf || tot <= 0) && return (0, 0.0, false, NaN, tot, false)
+    # Tolerances relative to the total weight: rescaling all weights changes nothing
+    zero_tol = 1e-12 * tot; tie_tol = 1e-9 * tot
     best = 0; bestv = -1.0; tie = false; H = 0.0
     @inbounds for k in 1:20
         v = core.W[p, k] - (k == k0 ? w0 : 0.0)
-        v < 1e-12 && continue
+        v < zero_tol && continue
         f = v / tot
         H -= f * log2(f)
-        if v > bestv + 1e-9
+        if v > bestv + tie_tol
             best = k; bestv = v; tie = false
-        elseif abs(v - bestv) <= 1e-9
+        elseif abs(v - bestv) <= tie_tol
             tie = true
         end
     end
+    # Only rounding residues left (e.g. zero weights for the other sequences)
+    best == 0 && return (0, 0.0, false, NaN, tot, false)
     (best, bestv / tot, tie, 1 - H / LOG2_20, tot, true)
 end
 
@@ -210,17 +214,28 @@ function conservation_analysis(sequences::AbstractVector; weights = nothing, min
     else
         throw(ArgumentError("weights must be nothing, :henikoff, :unique or a vector"))
     end
-    if weights === :unique   # first occurrence of each distinct sequence gets weight 1
-        seen = Set{Vector{UInt8}}()
-        w = [p in seen ? 0.0 : (push!(seen, p); 1.0) for p in prots]
+    # With `:unique` the analysis runs on the distinct sequences (units): each
+    # counts once, also in `min_sequences`, and leave-one-out removes a whole
+    # unit; every row gets the scores of its unit. The first row of each unit
+    # gets weight 1, the others 0.
+    units = prots; unit_of = collect(eachindex(prots))
+    if weights === :unique
+        first_row = Dict{Vector{UInt8},Int}()
+        unit_of = [get!(first_row, p, length(first_row) + 1) for p in prots]
+        units = unique(prots)
+        seen = falses(length(units))
+        w = [seen[u] ? 0.0 : (seen[u] = true; 1.0) for u in unit_of]
     end
+    uw = weights === :unique ? ones(length(units)) : w
+    nunits = length(units)
     neff = n == 0 ? 0.0 : n_effective(w)
-    if n < min_sequences
-        reason = "fewer than $min_sequences sequences ($n)"
+    if nunits < min_sequences
+        reason = weights === :unique ? "fewer than $min_sequences distinct sequences ($nunits)" :
+                 "fewer than $min_sequences sequences ($n)"
         return (positions = DataFrame(), sequences = _empty_seq_scores(sequences, reason),
                 n_sequences = n, n_effective = neff, weights = w, reason = reason)
     end
-    core = conservation_core(prots, w)
+    core = conservation_core(units, uw)
     min_inf = min_sequences - 1
     # positions (all sequences)
     pos = DataFrame(position = 1:core.L, n_informative = core.rsum)
@@ -242,11 +257,11 @@ function conservation_analysis(sequences::AbstractVector; weights = nothing, min
         pos[!, Symbol("freq_", a)] = [core.wsum[p] > 0 ? core.W[p, k] / core.wsum[p] : missing
                                       for p in 1:core.L]
     end
-    rows = map(eachindex(prots)) do i
-        aa, cs = loo_protein_scores(core, prots[i], w[i], min_inf, Float64(rare_threshold), radical)
+    unit_rows = map(eachindex(units)) do u
+        aa, cs = loo_protein_scores(core, units[u], uw[u], min_inf, Float64(rare_threshold), radical)
         merge(aa, cs)
     end
-    seqdf = DataFrame(rows)
+    seqdf = DataFrame(unit_rows[unit_of])
     insertcols!(seqdf, 1, :index => keep, :weight => w)
     seqdf.reason = fill("", n)
     out = _empty_seq_scores(sequences, "missing sequence")

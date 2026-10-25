@@ -19,4 +19,5 @@ include("helpers.jl")
     include("test_edgecases.jl")
     include("test_species.jl")
     include("test_genecolumns.jl")
+    include("test_threads.jl")
 end

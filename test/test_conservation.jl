@@ -37,4 +37,22 @@
     uw = conservation_analysis(vcat(others, [radical]); weights = :unique)
     @test uw.weights[2] == 0.0
     @test_throws ArgumentError conservation_analysis(others; weights = [1, 2])
+
+    # Rescaling every weight changes nothing (no false ties, no empty consensus)
+    s = ["A", "A", "A", "A", "V"]
+    ref = conservation_analysis(s; weights = ones(5)).sequences
+    for scale in (1e-10, 1e-15, 1e15)
+        r = conservation_analysis(s; weights = fill(scale, 5)).sequences
+        @test isequal(r.n_compared, ref.n_compared)
+        @test isequal(r.grantham_sum, ref.grantham_sum)
+    end
+    # `:unique` counts distinct sequences and scores identical rows alike
+    r = conservation_analysis(s; weights = :unique, min_sequences = 5)
+    @test r.reason == "fewer than 5 distinct sequences (2)"
+    r = conservation_analysis(["AK", "AK", "AK", "VK", "VR", "AR"]; weights = :unique, min_sequences = 3)
+    @test r.reason == ""
+    @test r.positions.n_informative == [4, 4]
+    @test r.weights == [1.0, 0.0, 0.0, 1.0, 1.0, 1.0]
+    @test allequal(r.sequences.n_compared[1:3]) && allequal(r.sequences.grantham_sum[1:3])
+    @test r.sequences.grantham_sum[1] == 90   # AK against the consensus VR of VK, VR, AR
 end

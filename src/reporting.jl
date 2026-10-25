@@ -208,7 +208,10 @@ function to_wide(res)
     out = copy(res.input)
     used = Set(propertynames(out))
     put!(name, v) = begin
-        nm = name in used ? Symbol("mito_", name) : name
+        nm = name
+        while nm in used
+            nm = Symbol("mito_", nm)
+        end
         out[!, nm] = v; push!(used, nm)
     end
     for c in propertynames(res.summary)

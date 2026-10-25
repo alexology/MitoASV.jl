@@ -48,7 +48,13 @@ function threshold_edges(dist, n::Int, threshold::Float64; threaded::Bool = true
         end
         buf
     end
-    bufs = nchunks == 1 ? [work(1)] : fetch.([Threads.@spawn(work(c)) for c in 1:nchunks])
+    bufs = if nchunks == 1
+        [work(1)]
+    else
+        tasks = [Threads.@spawn(work(c)) for c in 1:nchunks]
+        _wait_all(tasks)
+        fetch.(tasks)
+    end
     edges = reduce(vcat, bufs; init = Tuple{Int,Int,Float64}[])
     sort!(edges)
 end

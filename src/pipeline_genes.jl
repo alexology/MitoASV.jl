@@ -15,7 +15,7 @@ mutable struct GeneData
     frame_note::String
     records::Vector{Union{Missing,CodingRecord}}
     proteins::Vector{Union{Missing,String}}   # ungapped-by-column protein (gap codons kept as '-')
-    hydro::Vector{Any}
+    hydro::Vector{HydroMetrics}
 end
 
 genename(g::GeneData) = g.spec.name
@@ -38,7 +38,23 @@ function _tforeach(f, n::Int; threaded::Bool = true)
             f(i)
         end
     end
-    foreach(wait, tasks)
+    _wait_all(tasks)
+end
+
+"""
+Waits for every task, then rethrows the first failure in task order, so no
+task is still running when the caller returns or throws.
+"""
+function _wait_all(tasks)
+    failure = nothing
+    for task in tasks
+        try
+            wait(task)
+        catch e
+            failure === nothing && (failure = e)
+        end
+    end
+    failure === nothing || throw(failure)
     nothing
 end
 
@@ -101,7 +117,7 @@ function prepare_gene(spec::GeneSpec, df::DataFrame, main::Union{Nothing,Vector}
     frame, source, note = _choose_frame(spec, stopcounts, fstatus, cfg)
     records = Vector{Union{Missing,CodingRecord}}(missing, nu)
     proteins = Vector{Union{Missing,String}}(missing, nu)
-    hydro = Vector{Any}(undef, nu)
+    hydro = Vector{HydroMetrics}(undef, nu)
     _tforeach(nu; threaded = cfg.threaded) do u
         if frame === nothing
             hydro[u] = _missing_hydro("reading frame unresolved")
@@ -210,6 +226,10 @@ function hydrophobicity_rows(g::GeneData, ids)
     rows = [g.row_unique[r] == 0 ? _missing_hydro(string(g.row_status[r])) : g.hydro[g.row_unique[r]]
             for r in 1:n]
     df = DataFrame(rows)
+    # Column types as narrow as the values (`Float64` when nothing is missing).
+    for c in names(df)
+        df[!, c] = identity.(df[!, c])
+    end
     insertcols!(df, 1, :row => 1:n, :id => ids, :gene => fill(genename(g), n))
     df
 end
