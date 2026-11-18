@@ -1,5 +1,8 @@
 # MitoASV.jl
 
+[![CI](https://github.com/alexology/MitoASV.jl/actions/workflows/CI.yml/badge.svg)](https://github.com/alexology/MitoASV.jl/actions/workflows/CI.yml)
+[![Docs](https://img.shields.io/badge/docs-dev-blue.svg)](https://alexology.github.io/MitoASV.jl/dev/)
+
 Reference-free biological plausibility assessment of mitochondrial
 protein-coding amplicon sequence variants (ASVs), designed for insect
 metabarcoding and long-range ND2–COI amplicons.
@@ -38,7 +41,7 @@ taxonomic assignment and no database.
 - [Testing and simulated data](#testing-and-simulated-data)
 - [References](#references)
 
-Method details are in [docs/METHODS.md](docs/METHODS.md).
+Method details are in [docs/src/methods.md](docs/src/methods.md).
 
 ## Installation
 
